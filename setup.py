@@ -22,14 +22,8 @@ from setuptools import setup, find_packages
 
 requirements = [
     'protobuf',
-    'protobuf.socketrpc',
+    'protobuf_socket_rpc',
 ]
-
-
-dependency_links = [
-    'https://protobuf-socket-rpc.googlecode.com/files/protobuf.socketrpc-1.3.2-py2.6.egg#egg=protobuf.socketrpc',
-]
-
 
 # XXX add classifiers, docs
 
@@ -51,5 +45,4 @@ setup(
     packages=find_packages('src', exclude=['leap.common.tests']),
     test_suite='leap.common.tests',
     install_requires=requirements,
-    dependency_links=dependency_links,
 )
