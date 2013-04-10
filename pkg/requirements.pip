@@ -1,0 +1,5 @@
+jsonschema<=0.8
+pyxdg
+protobuf
+protobuf.socketrpc
+autopep8
