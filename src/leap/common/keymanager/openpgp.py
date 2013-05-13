@@ -60,7 +60,7 @@ def encrypt_sym(data, passphrase):
 
     def _encrypt_cb(gpg):
         return gpg.encrypt(
-                data, None, passphrase=passphrase, symmetric=True).data
+            data, None, passphrase=passphrase, symmetric=True).data
 
     return _safe_call(_encrypt_cb)
 
@@ -100,12 +100,12 @@ def encrypt_asym(data, key):
 
     def _encrypt_cb(gpg):
         return gpg.encrypt(
-                data, key.fingerprint, symmetric=False).data
+            data, key.fingerprint, symmetric=False).data
 
     return _safe_call(_encrypt_cb, key.key_data)
 
 
-def decrypt_asym(data, key):
+def decrypt_asym(data, key, passphrase=None):
     """
     Decrypt C{data} using private @{key}.
 
@@ -120,7 +120,7 @@ def decrypt_asym(data, key):
     leap_assert(key.private is True, 'Key is not private.')
 
     def _decrypt_cb(gpg):
-        return gpg.decrypt(data).data
+        return gpg.decrypt(data, passphrase=passphrase).data
 
     return _safe_call(_decrypt_cb, key.key_data)
 
@@ -175,6 +175,7 @@ def is_encrypted_asym(data):
 
     return _safe_call(_is_encrypted_cb)
 
+
 def sign(data, key):
     """
     Sign C{data} with C{key}.
@@ -188,12 +189,13 @@ def sign(data, key):
     @rtype: str
     """
     leap_assert_type(key, OpenPGPKey)
-    leap_assert(key.private == True)
+    leap_assert(key.private is True)
 
     def _sign_cb(gpg):
         return gpg.sign(data, keyid=key.key_id).data
 
     return _safe_call(_sign_cb, key.key_data)
+
 
 def verify(data, key):
     """
@@ -208,7 +210,7 @@ def verify(data, key):
     @rtype: str
     """
     leap_assert_type(key, OpenPGPKey)
-    leap_assert(key.private == False)
+    leap_assert(key.private is False)
 
     def _verify_cb(gpg):
         return gpg.verify(data).valid
@@ -218,6 +220,7 @@ def verify(data, key):
 #
 # Helper functions
 #
+
 
 def _build_key_from_gpg(address, key, key_data):
     """
@@ -267,6 +270,7 @@ def _build_unitary_gpgwrapper(key_data=None):
     leap_assert(len(gpg.list_keys()) is 0, 'Keyring not empty.')
     if key_data:
         gpg.import_keys(key_data)
+
         leap_assert(
             len(gpg.list_keys()) is 1,
             'Unitary keyring has wrong number of keys: %d.'
@@ -307,7 +311,9 @@ def _safe_call(callback, key_data=None, **kwargs):
     @rtype: str or bool
     """
     gpg = _build_unitary_gpgwrapper(key_data)
+
     val = callback(gpg, **kwargs)
+    print "destroying unitary gpgwrapper"
     _destroy_unitary_gpgwrapper(gpg)
     return val
 
@@ -418,6 +424,7 @@ class OpenPGPScheme(EncryptionScheme):
 
             privkey = None
             pubkey = None
+
             try:
                 privkey = gpg.list_keys(secret=True).pop()
             except IndexError:
