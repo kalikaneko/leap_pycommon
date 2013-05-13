@@ -15,22 +15,18 @@
 # You should have received a copy of the GNU General Public License
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-
 """
 Infrastructure for using OpenPGP keys in Key Manager.
 """
-
-
+import logging
+import os
 import re
-import tempfile
 import shutil
+import tempfile
 
 from leap.common.check import leap_assert, leap_assert_type
-from leap.common.keymanager.errors import (
-    KeyNotFound,
-    KeyAlreadyExists,
-    KeyAttributesDiffer
-)
+from leap.common.keymanager import errors
+
 from leap.common.keymanager.keys import (
     EncryptionKey,
     EncryptionScheme,
@@ -40,11 +36,137 @@ from leap.common.keymanager.keys import (
 )
 from leap.common.keymanager.gpg import GPGWrapper
 
+logger = logging.getLogger(__name__)
+
+
+#
+# gpg wrapper and decorator
+#
+
+def unitary_gpgwrapper(key_data=None):
+    """
+    Returns a unitary gpg wrapper that implements context manager
+    protocol.
+
+    @param key_data: ASCII armored key data.
+    @type key_data: str
+
+    @return: a GPGWrapper instance
+    @rtype: GPGWrapper
+    """
+    # TODO do here checks on key_data
+    return UnitaryGPGWrapper(key_data=key_data)
+
+
+def with_unitary_gpg(fun):
+    """
+    Decorator to add a unitary gpg wrapper as context
+    to gpg related functions.
+
+    Decorated functions are supposed to return a function whose only
+    argument is a gpgwrapper instance.
+    """
+    def wrapped(*args, **kwargs):
+        val = None
+        if len(args) == 2:
+            key_data = getattr(args[1], 'key_data', None)
+        else:
+            key_data = None
+
+        with unitary_gpgwrapper(key_data) as gpg:
+            val = fun(*args, **kwargs)(gpg)
+
+            # TODO should inspect gpg result here
+            # and signal any gpg errors found
+
+            stderr = getattr(val, 'stderr', None)
+            if stderr:
+                logger.error("%s" % (stderr,))
+
+            if hasattr(val, 'data'):
+                val = val.data
+        return val
+    return wrapped
+
+
+class UnitaryGPGWrapper(object):
+    """
+    A context manager returning a temporary GPG wrapper keyring, which
+    contains exactly zero or one keys.
+
+    Temporary unitary keyrings allow the to use GPG's facilities for exactly
+    one key. This function creates an empty temporary keyring and imports
+    C{key_data} if it is not None.
+    """
+    def __init__(self, key_data=None):
+        """
+        @param key_data: ASCII armored key data.
+        @type key_data: str
+        """
+        self._gpg = None
+        self.key_data = key_data
+
+    def __enter__(self):
+        """
+        Calls the unitary gpgwrapper initializer
+
+        @return: A GPG wrapper with a unitary keyring.
+        @rtype: gnupg.GPG
+        """
+        self._build_unitary_gpgwrapper()
+        return self._gpg
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        """
+        Ensures the unitary gpgwrapper is properly destroyed.
+        """
+        # TODO handle exceptions and log here
+        self._destroy_unitary_gpgwrapper()
+
+    def _build_unitary_gpgwrapper(self):
+        """
+        Builds the unitary gpgwrapper.
+        """
+        self._gpg = GPGWrapper(gnupghome=tempfile.mkdtemp())
+        leap_assert(len(self._gpg.list_keys()) is 0, 'Keyring not empty.')
+        if self.key_data:
+            self._gpg.import_keys(self.key_data)
+            leap_assert(
+                len(self._gpg.list_keys()) is 1,
+                'Unitary keyring has wrong number of keys: %d.'
+                % len(self._gpg.list_keys()))
+
+    def _destroy_unitary_gpgwrapper(self):
+        """
+        Securely erase a unitary keyring.
+        """
+        # TODO: implement some kind of wiping of data or a more
+        # secure way that
+        # does not write to disk.
+        # --- maybe we could mmap the file?
+
+        try:
+            for secret in [True, False]:
+                for key in self._gpg.list_keys(secret=secret):
+                    self._gpg.delete_keys(
+                        key['fingerprint'],
+                        secret=secret)
+            leap_assert(len(self._gpg.list_keys()) is 0, 'Keyring not empty!')
+
+        except:
+            raise
+
+        finally:
+            leap_assert(self._gpg.gnupghome != os.path.expanduser('~/.gnupg'),
+                        "watch out! Tried to remove default gnupg home!")
+            shutil.rmtree(self._gpg.gnupghome)
+
 
 #
 # API functions
 #
 
+@with_unitary_gpg
 def encrypt_sym(data, passphrase):
     """
     Encrypt C{data} with C{passphrase}.
@@ -57,14 +179,12 @@ def encrypt_sym(data, passphrase):
     @return: The encrypted data.
     @rtype: str
     """
-
-    def _encrypt_cb(gpg):
-        return gpg.encrypt(
-            data, None, passphrase=passphrase, symmetric=True).data
-
-    return _safe_call(_encrypt_cb)
+    return lambda gpg: gpg.encrypt(
+        data, None, passphrase=passphrase,
+        symmetric=True)
 
 
+@with_unitary_gpg
 def decrypt_sym(data, passphrase):
     """
     Decrypt C{data} with C{passphrase}.
@@ -77,14 +197,12 @@ def decrypt_sym(data, passphrase):
     @return: The decrypted data.
     @rtype: str
     """
-
-    def _decrypt_cb(gpg):
-        return gpg.decrypt(data, passphrase=passphrase).data
-
-    return _safe_call(_decrypt_cb)
+    return lambda gpg: gpg.decrypt(
+        data, passphrase=passphrase)
 
 
-def encrypt_asym(data, key):
+@with_unitary_gpg
+def encrypt_asym(data, key, passphrase=None):
     """
     Encrypt C{data} using public @{key}.
 
@@ -97,14 +215,12 @@ def encrypt_asym(data, key):
     @rtype: str
     """
     leap_assert(key.private is False, 'Key is not public.')
-
-    def _encrypt_cb(gpg):
-        return gpg.encrypt(
-            data, key.fingerprint, symmetric=False).data
-
-    return _safe_call(_encrypt_cb, key.key_data)
+    return lambda gpg: gpg.encrypt(
+        data, key.fingerprint, passphrase=passphrase,
+        symmetric=False)
 
 
+@with_unitary_gpg
 def decrypt_asym(data, key, passphrase=None):
     """
     Decrypt C{data} using private @{key}.
@@ -118,13 +234,11 @@ def decrypt_asym(data, key, passphrase=None):
     @rtype: str
     """
     leap_assert(key.private is True, 'Key is not private.')
-
-    def _decrypt_cb(gpg):
-        return gpg.decrypt(data, passphrase=passphrase).data
-
-    return _safe_call(_decrypt_cb, key.key_data)
+    return lambda gpg: gpg.decrypt(
+        data, passphrase=passphrase)
 
 
+@with_unitary_gpg
 def is_encrypted(data):
     """
     Return whether C{data} was encrypted using OpenPGP.
@@ -135,13 +249,10 @@ def is_encrypted(data):
     @return: Whether C{data} was encrypted using this wrapper.
     @rtype: bool
     """
-
-    def _is_encrypted_cb(gpg):
-        return gpg.is_encrypted(data)
-
-    return _safe_call(_is_encrypted_cb)
+    return lambda gpg: gpg.is_encrypted(data)
 
 
+@with_unitary_gpg
 def is_encrypted_sym(data):
     """
     Return whether C{data} was encrypted using a public OpenPGP key.
@@ -152,13 +263,10 @@ def is_encrypted_sym(data):
     @return: Whether C{data} was encrypted using this wrapper.
     @rtype: bool
     """
-
-    def _is_encrypted_cb(gpg):
-        return gpg.is_encrypted_sym(data)
-
-    return _safe_call(_is_encrypted_cb)
+    return lambda gpg: gpg.is_encrypted_sym(data)
 
 
+@with_unitary_gpg
 def is_encrypted_asym(data):
     """
     Return whether C{data} was asymmetrically encrypted using OpenPGP.
@@ -169,13 +277,10 @@ def is_encrypted_asym(data):
     @return: Whether C{data} was encrypted using this wrapper.
     @rtype: bool
     """
-
-    def _is_encrypted_cb(gpg):
-        return gpg.is_encrypted_asym(data)
-
-    return _safe_call(_is_encrypted_cb)
+    return lambda gpg: gpg.is_encrypted_asym(data)
 
 
+@with_unitary_gpg
 def sign(data, key):
     """
     Sign C{data} with C{key}.
@@ -191,12 +296,10 @@ def sign(data, key):
     leap_assert_type(key, OpenPGPKey)
     leap_assert(key.private is True)
 
-    def _sign_cb(gpg):
-        return gpg.sign(data, keyid=key.key_id).data
-
-    return _safe_call(_sign_cb, key.key_data)
+    return lambda gpg: gpg.sign(data, keyid=key.key_id)
 
 
+@with_unitary_gpg
 def verify(data, key):
     """
     Verify signed C{data} with C{key}.
@@ -211,11 +314,8 @@ def verify(data, key):
     """
     leap_assert_type(key, OpenPGPKey)
     leap_assert(key.private is False)
+    return lambda gpg: gpg.verify(data).valid
 
-    def _verify_cb(gpg):
-        return gpg.verify(data).valid
-
-    return _safe_call(_verify_cb, key.key_data)
 
 #
 # Helper functions
@@ -249,73 +349,6 @@ def _build_key_from_gpg(address, key, key_data):
         expiry_date=key['expires'],
         validation=None,  # TODO: verify for validation.
     )
-
-
-def _build_unitary_gpgwrapper(key_data=None):
-    """
-    Return a temporary GPG wrapper keyring containing exactly zero or one
-    keys.
-
-    Temporary unitary keyrings allow the to use GPG's facilities for exactly
-    one key. This function creates an empty temporary keyring and imports
-    C{key_data} if it is not None.
-
-    @param key_data: ASCII armored key data.
-    @type key_data: str
-    @return: A GPG wrapper with a unitary keyring.
-    @rtype: gnupg.GPG
-    """
-    tmpdir = tempfile.mkdtemp()
-    gpg = GPGWrapper(gnupghome=tmpdir)
-    leap_assert(len(gpg.list_keys()) is 0, 'Keyring not empty.')
-    if key_data:
-        gpg.import_keys(key_data)
-
-        leap_assert(
-            len(gpg.list_keys()) is 1,
-            'Unitary keyring has wrong number of keys: %d.'
-            % len(gpg.list_keys()))
-    return gpg
-
-
-def _destroy_unitary_gpgwrapper(gpg):
-    """
-    Securely erase a unitary keyring.
-
-    @param gpg: A GPG wrapper instance.
-    @type gpg: gnupg.GPG
-    """
-    for secret in [True, False]:
-        for key in gpg.list_keys(secret=secret):
-            gpg.delete_keys(
-                key['fingerprint'],
-                secret=secret)
-    leap_assert(len(gpg.list_keys()) is 0, 'Keyring not empty!')
-    # TODO: implement some kind of wiping of data or a more secure way that
-    # does not write to disk.
-    shutil.rmtree(gpg.gnupghome)
-
-
-def _safe_call(callback, key_data=None, **kwargs):
-    """
-    Run C{callback} in an unitary keyring containing C{key_data}.
-
-    @param callback: Function whose first argument is the gpg keyring.
-    @type callback: function(gnupg.GPG)
-    @param key_data: ASCII armored key data.
-    @type key_data: str
-    @param **kwargs: Other eventual parameters for the callback.
-    @type **kwargs: **dict
-
-    @return: The results of the callback.
-    @rtype: str or bool
-    """
-    gpg = _build_unitary_gpgwrapper(key_data)
-
-    val = callback(gpg, **kwargs)
-    print "destroying unitary gpgwrapper"
-    _destroy_unitary_gpgwrapper(gpg)
-    return val
 
 
 #
@@ -356,11 +389,11 @@ class OpenPGPScheme(EncryptionScheme):
         leap_assert(is_address(address), 'Not an user address: %s' % address)
         try:
             self.get_key(address)
-            raise KeyAlreadyExists(address)
-        except KeyNotFound:
+            raise errors.KeyAlreadyExists(address)
+        except errors.KeyNotFound:
             pass
 
-        def _gen_key_cb(gpg):
+        def _gen_key(gpg):
             params = gpg.gen_key_input(
                 key_type='RSA',
                 key_length=4096,
@@ -388,7 +421,10 @@ class OpenPGPScheme(EncryptionScheme):
                     gpg.export_keys(key['fingerprint'], secret=secret))
                 self.put_key(openpgp_key)
 
-        _safe_call(_gen_key_cb)
+        with unitary_gpgwrapper() as gpg:
+            # TODO: inspect result, or use decorator
+            _gen_key(gpg)
+
         return self.get_key(address, private=True)
 
     def get_key(self, address, private=False):
@@ -407,7 +443,7 @@ class OpenPGPScheme(EncryptionScheme):
         leap_assert(is_address(address), 'Not an user address: %s' % address)
         doc = self._get_key_doc(address, private)
         if doc is None:
-            raise KeyNotFound(address)
+            raise errors.KeyNotFound(address)
         return build_key_from_dict(OpenPGPKey, address, doc.content)
 
     def put_key_raw(self, data):
@@ -420,7 +456,7 @@ class OpenPGPScheme(EncryptionScheme):
         # TODO: add more checks for correct key data.
         leap_assert(data is not None, 'Data does not represent a key.')
 
-        def _put_key_raw_cb(gpg):
+        def _put_key_raw(gpg):
 
             privkey = None
             pubkey = None
@@ -456,7 +492,9 @@ class OpenPGPScheme(EncryptionScheme):
                 gpg.export_keys(pubkey['fingerprint'], secret=False))
             self.put_key(openpgp_pubkey)
 
-        _safe_call(_put_key_raw_cb, data)
+        with unitary_gpgwrapper(data) as gpg:
+            # TODO: inspect result, or use decorator
+            _put_key_raw(gpg)
 
     def put_key(self, key):
         """
@@ -501,9 +539,9 @@ class OpenPGPScheme(EncryptionScheme):
         leap_assert(key.__class__ is OpenPGPKey, 'Wrong key type.')
         stored_key = self.get_key(key.address, private=key.private)
         if stored_key is None:
-            raise KeyNotFound(key)
+            raise errors.KeyNotFound(key)
         if stored_key.__dict__ != key.__dict__:
-            raise KeyAttributesDiffer(key)
+            raise errors.KeyAttributesDiffer(key)
         doc = self._soledad.get_doc(
             keymanager_doc_id(OpenPGPKey, key.address, key.private))
         self._soledad.delete_doc(doc)

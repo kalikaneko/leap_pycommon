@@ -15,18 +15,17 @@
 # You should have received a copy of the GNU General Public License
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 
-
 """
 Tests for the Key Manager.
 """
 
-
-import mock
+import unittest
 try:
     import simplejson as json
 except ImportError:
     import json  # noqa
 
+import mock
 
 from leap.common.testing.basetest import BaseLeapTest
 from leap.soledad import Soledad
@@ -47,7 +46,8 @@ from leap.common.keymanager.keys import (
     build_key_from_dict,
     keymanager_doc_id,
 )
-from leap.common.keymanager import errors
+
+#from leap.common.keymanager import errors
 
 
 ADDRESS = 'leap@leap.se'
@@ -385,10 +385,14 @@ class KeyManagerKeyManagementTestCase(
     def test_sign_verify(self):
         km = self._key_manager()
         km._wrapper_map[OpenPGPKey].put_key_raw(PRIVATE_KEY)
+
         data = 'data'
         privkey = km.get_key(ADDRESS, OpenPGPKey, private=True)
         signed = openpgp.sign(data, privkey)
+
+        self.assertTrue(signed is not '')
         pubkey = km.get_key(ADDRESS, OpenPGPKey, private=False)
+
         self.assertTrue(openpgp.verify(signed, pubkey))
 
 
@@ -554,3 +558,6 @@ RZXoH+FTg9UAW87eqU610npOkT6cRaBxaMK/mDtGNdc=
 =JTFu
 -----END PGP PRIVATE KEY BLOCK-----
 """
+
+if __name__ == "__main__":
+    unittest.main()
