@@ -241,14 +241,16 @@ class OpenPGPCryptoTestCase(KeyManagerWithSoledadTestCase):
             KeyNotFound, pgp.get_key, ADDRESS, private=True)
 
     def test_openpgp_encrypt_decrypt_sym(self):
-        cyphertext = openpgp.encrypt_sym('data', 'pass')
+        cyphertext = openpgp.encrypt_sym(
+            'data', passphrase='pass')
         self.assertTrue(cyphertext is not None)
         self.assertTrue(cyphertext != '')
         self.assertTrue(cyphertext != 'data')
         self.assertTrue(openpgp.is_encrypted_sym(cyphertext))
         self.assertFalse(openpgp.is_encrypted_asym(cyphertext))
         self.assertTrue(openpgp.is_encrypted(cyphertext))
-        plaintext = openpgp.decrypt_sym(cyphertext, 'pass')
+        plaintext = openpgp.decrypt_sym(
+            cyphertext, passphrase='pass')
         self.assertEqual('data', plaintext)
 
     def test_verify_with_private_raises(self):
@@ -299,7 +301,7 @@ class OpenPGPCryptoTestCase(KeyManagerWithSoledadTestCase):
         pubkey = pgp.get_key(ADDRESS, private=False)
         self.assertRaises(
             AssertionError,
-            openpgp.encrypt_sym, data, '123', sign=pubkey)
+            openpgp.encrypt_sym, data, passphrase='123', sign=pubkey)
 
     def test_decrypt_asym_verify_with_private_raises(self):
         pgp = openpgp.OpenPGPScheme(self._soledad)
@@ -327,23 +329,25 @@ class OpenPGPCryptoTestCase(KeyManagerWithSoledadTestCase):
             errors.InvalidSignature,
             openpgp.verify, encrypted_and_signed, wrongkey)
 
-    def test_decrypt_sym_verify_with_private_raises(self):
-        pgp = openpgp.OpenPGPScheme(self._soledad)
-        pgp.put_ascii_key(PRIVATE_KEY)
-        data = 'data'
-        privkey = pgp.get_key(ADDRESS, private=True)
-        encrypted_and_signed = openpgp.encrypt_sym(data, '123', sign=privkey)
-        self.assertRaises(
-            AssertionError,
-            openpgp.decrypt_sym,
-            encrypted_and_signed, 'decrypt', verify=privkey)
+    #def test_decrypt_sym_verify_with_private_raises(self):
+        #pgp = openpgp.OpenPGPScheme(self._soledad)
+        #pgp.put_ascii_key(PRIVATE_KEY)
+        #data = 'data'
+        #privkey = pgp.get_key(ADDRESS, private=True)
+        #encrypted_and_signed = openpgp.encrypt_sym(
+            #data, passphrase='123', sign=privkey)
+        #self.assertRaises(
+            #AssertionError,
+            #openpgp.decrypt_sym,
+            #encrypted_and_signed, passphrase='decrypt', verify=privkey)
 
     def test_decrypt_sym_verify_with_private_raises(self):
         pgp = openpgp.OpenPGPScheme(self._soledad)
         pgp.put_ascii_key(PRIVATE_KEY)
         data = 'data'
         privkey = pgp.get_key(ADDRESS, private=True)
-        encrypted_and_signed = openpgp.encrypt_sym(data, '123', sign=privkey)
+        encrypted_and_signed = openpgp.encrypt_sym(
+            data, passphrase='123', sign=privkey)
         pgp.put_ascii_key(PUBLIC_KEY_2)
         wrongkey = pgp.get_key('anotheruser@leap.se')
         self.assertRaises(
@@ -368,9 +372,10 @@ class OpenPGPCryptoTestCase(KeyManagerWithSoledadTestCase):
         pubkey2 = pgp.get_key(ADDRESS_2, private=False)
         privkey2 = pgp.get_key(ADDRESS_2, private=True)
         data = 'data'
-        encrypted_and_signed = openpgp.encrypt_asym(data, pubkey2, sign=privkey)
+        encrypted_and_signed = openpgp.encrypt_asym(
+            data, pubkey2, sign=privkey)
         res = openpgp.decrypt_asym(
-                encrypted_and_signed, privkey2, verify=pubkey)
+            encrypted_and_signed, privkey2, verify=pubkey)
         self.assertTrue(data, res)
 
     def test_encrypt_sym_sign_decrypt_verify(self):
@@ -379,14 +384,15 @@ class OpenPGPCryptoTestCase(KeyManagerWithSoledadTestCase):
         data = 'data'
         privkey = pgp.get_key(ADDRESS, private=True)
         pubkey = pgp.get_key(ADDRESS, private=False)
-        encrypted_and_signed = openpgp.encrypt_sym(data, '123', sign=privkey)
+        encrypted_and_signed = openpgp.encrypt_sym(
+            data, passphrase='123', sign=privkey)
         res = openpgp.decrypt_sym(
-                encrypted_and_signed, '123', verify=pubkey)
+            encrypted_and_signed,
+            passphrase='123', verify=pubkey)
         self.assertEqual(data, res)
 
 
-class KeyManagerKeyManagementTestCase(
-    KeyManagerWithSoledadTestCase):
+class KeyManagerKeyManagementTestCase(KeyManagerWithSoledadTestCase):
 
     def test_get_all_keys_in_db(self):
         km = self._key_manager()
@@ -475,6 +481,7 @@ class KeyManagerKeyManagementTestCase(
         class Response(object):
             status_code = 200
             headers = {'content-type': 'application/json'}
+
             def json(self):
                 return {'address': 'anotheruser@leap.se', 'keys': []}
 
@@ -484,7 +491,7 @@ class KeyManagerKeyManagementTestCase(
         km.fetch_keys_from_server('anotheruser@leap.se')
         # and verify the call
         km._fetcher.get.assert_called_once_with(
-           km._nickserver_url + '/key/' + 'anotheruser@leap.se',
+            km._nickserver_url + '/key/' + 'anotheruser@leap.se',
         )
 
     def test_refresh_keys(self):
@@ -718,3 +725,6 @@ THx7N776fcYHGumbqUMYrxrcZSbNveE6SaK8fphRam1dewM0
 =a5gs
 -----END PGP PRIVATE KEY BLOCK-----
 """
+import unittest
+if __name__ == "__main__":
+    unittest.main()
