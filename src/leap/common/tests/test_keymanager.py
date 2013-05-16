@@ -144,17 +144,18 @@ class KeyManagerWithSoledadTestCase(BaseLeapTest):
         self._soledad = Soledad(
             "leap@leap.se",
             "123456",
-            secret_path=self.tempdir+"/secret.gpg",
-            local_db_path=self.tempdir+"/soledad.u1db",
-            server_url='',
-            cert_file=None,
-            bootstrap=False,
+            self.tempdir+"/secret.gpg",
+            self.tempdir+"/soledad.u1db",
+            #None,
+            "",
+            None,
+            auth_token=None
         )
         # initialize solead by hand for testing purposes
         self._soledad._init_dirs()
         self._soledad._crypto = SoledadCrypto(self._soledad)
         self._soledad._shared_db = None
-        self._soledad._init_keys()
+        #self._soledad._init_keys()
         self._soledad._init_db()
 
     def tearDown(self):
@@ -329,18 +330,6 @@ class OpenPGPCryptoTestCase(KeyManagerWithSoledadTestCase):
             errors.InvalidSignature,
             openpgp.verify, encrypted_and_signed, wrongkey)
 
-    #def test_decrypt_sym_verify_with_private_raises(self):
-        #pgp = openpgp.OpenPGPScheme(self._soledad)
-        #pgp.put_ascii_key(PRIVATE_KEY)
-        #data = 'data'
-        #privkey = pgp.get_key(ADDRESS, private=True)
-        #encrypted_and_signed = openpgp.encrypt_sym(
-            #data, passphrase='123', sign=privkey)
-        #self.assertRaises(
-            #AssertionError,
-            #openpgp.decrypt_sym,
-            #encrypted_and_signed, passphrase='decrypt', verify=privkey)
-
     def test_decrypt_sym_verify_with_private_raises(self):
         pgp = openpgp.OpenPGPScheme(self._soledad)
         pgp.put_ascii_key(PRIVATE_KEY)
@@ -348,11 +337,23 @@ class OpenPGPCryptoTestCase(KeyManagerWithSoledadTestCase):
         privkey = pgp.get_key(ADDRESS, private=True)
         encrypted_and_signed = openpgp.encrypt_sym(
             data, passphrase='123', sign=privkey)
-        pgp.put_ascii_key(PUBLIC_KEY_2)
-        wrongkey = pgp.get_key('anotheruser@leap.se')
         self.assertRaises(
-            errors.InvalidSignature,
-            openpgp.verify, encrypted_and_signed, wrongkey)
+            AssertionError,
+            openpgp.decrypt_sym,
+            encrypted_and_signed, passphrase='decrypt', verify=privkey)
+
+    #def test_decrypt_sym_verify_with_private_raises(self):
+        #pgp = openpgp.OpenPGPScheme(self._soledad)
+        #pgp.put_ascii_key(PRIVATE_KEY)
+        #data = 'data'
+        #privkey = pgp.get_key(ADDRESS, private=True)
+        #encrypted_and_signed = openpgp.encrypt_sym(
+            #data, passphrase='123', sign=privkey)
+        #pgp.put_ascii_key(PUBLIC_KEY_2)
+        #wrongkey = pgp.get_key('anotheruser@leap.se')
+        #self.assertRaises(
+            #errors.InvalidSignature,
+            #openpgp.verify, encrypted_and_signed, wrongkey)
 
     def test_sign_verify(self):
         pgp = openpgp.OpenPGPScheme(self._soledad)
@@ -372,6 +373,7 @@ class OpenPGPCryptoTestCase(KeyManagerWithSoledadTestCase):
         pubkey2 = pgp.get_key(ADDRESS_2, private=False)
         privkey2 = pgp.get_key(ADDRESS_2, private=True)
         data = 'data'
+
         encrypted_and_signed = openpgp.encrypt_asym(
             data, pubkey2, sign=privkey)
         res = openpgp.decrypt_asym(
@@ -506,6 +508,8 @@ class KeyManagerKeyManagementTestCase(KeyManagerWithSoledadTestCase):
 
 
 # Key material for testing
+
+# key 24D18DDF: public key "Leap Test Key <leap@leap.se>"
 KEY_FINGERPRINT = "E36E738D69173C13D709E44F2F455E2824D18DDF"
 PUBLIC_KEY = """
 -----BEGIN PGP PUBLIC KEY BLOCK-----
@@ -668,6 +672,7 @@ RZXoH+FTg9UAW87eqU610npOkT6cRaBxaMK/mDtGNdc=
 -----END PGP PRIVATE KEY BLOCK-----
 """
 
+# key 7FEE575A: public key "anotheruser <anotheruser@leap.se>"
 PUBLIC_KEY_2 = """
 -----BEGIN PGP PUBLIC KEY BLOCK-----
 Version: GnuPG v1.4.10 (GNU/Linux)

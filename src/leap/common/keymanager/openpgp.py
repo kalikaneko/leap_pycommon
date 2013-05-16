@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 # gpg wrapper and decorator
 #
 
-def unitary_gpgwrapper(keys=None):
+def temporary_gpgwrapper(keys=None):
     """
     Returns a unitary gpg wrapper that implements context manager
     protocol.
@@ -55,12 +55,12 @@ def unitary_gpgwrapper(keys=None):
     @rtype: GPGWrapper
     """
     # TODO do here checks on key_data
-    return UnitaryGPGWrapper(keys=keys)
+    return TempGPGWrapper(keys=keys)
 
 
-def with_unitary_gpg(fun):
+def with_temporary_gpg(fun):
     """
-    Decorator to add a unitary gpg wrapper as context
+    Decorator to add a temporary gpg wrapper as context
     to gpg related functions.
 
     Decorated functions are expected to return a function whose only
@@ -73,16 +73,21 @@ def with_unitary_gpg(fun):
         else:
             keys = None
 
+        # sign/verify keys passed as arguments
         sign = kwargs.get('sign', None)
         if sign:
             keys = [keys, sign]
 
         verify = kwargs.get('verify', None)
+        if verify:
+            keys = [keys, verify]
+
+        # is the wrapped function sign or verify?
         fun_name = fun.__name__
         is_sign = True if fun_name == "sign" else False
         is_verify = True if fun_name == "verify" else False
 
-        with unitary_gpgwrapper(keys) as gpg:
+        with temporary_gpgwrapper(keys) as gpg:
             result = fun(*args, **kwargs)(gpg)
 
             # TODO: cleanup a little bit the
@@ -92,7 +97,7 @@ def with_unitary_gpg(fun):
             ok = getattr(result, 'ok', None)
             stderr = getattr(val, 'stderr', None)
             if stderr:
-                logger.error("%s" % (stderr,))
+                logger.info("%s" % (stderr,))
 
             if ok is False:
                 # XXX convert this to EncryptionDecryptionError ?
@@ -101,33 +106,38 @@ def with_unitary_gpg(fun):
                         fun.__name__,
                         result.stderr,))
 
+            if is_sign:
+                privkey = gpg.list_keys(secret=True).pop()
+                rfprint = result.fingerprint
+                kfprint = privkey['fingerprint']
+                if result.fingerprint is None:
+                    raise errors.SignFailed(
+                        'Failed to sign with key %s: %s' %
+                        (privkey['keyid'], result.stderr))
+                leap_assert(
+                    result.fingerprint == kfprint,
+                    'Signature and private key fingerprints mismatch: '
+                    '%s != %s' %
+                    (rfprint, kfprint))
+
             if verify is not None:
+                #import ipdb; ipdb.set_trace()
+
                 if result.valid is False or \
                         verify.fingerprint != result.pubkey_fingerprint:
                     raise errors.InvalidSignature(
                         'Failed to verify signature with key %s: %s' %
                         (verify.key_id, result.stderr))
 
-            if is_sign:
-                # TODO: get key from gpg to complete the log
-                if result.fingerprint is None:
-                    raise errors.SignFailed(
-                        #'Failed to sign with key %s: %s' %
-                        #(key.key_id, result.stderr))
-                        'Failed to sign: %s' %
-                        (result.stderr,))
-                #leap_assert(
-                    #result.fingerprint == key.fingerprint,
-                    #'Signature and private key fingerprints mismatch: '
-                    #'%s != %s' %
-                    #(result.fingerprint, privkey.fingerprint))
-
-            if is_verify and (result.valid is False):
-                # TODO get key from keyring
-                #or result.fingerprint != key.fingerprint):
-                raise errors.InvalidSignature(
-                    'Failed to verify signature')
-                    # with key %s.' % pubkey.key_id)
+            if is_verify:
+                pubkey = gpg.list_keys().pop()
+                valid = result.valid
+                rfprint = result.fingerprint
+                kfprint = pubkey['fingerprint']
+                if valid is False or rfprint != kfprint:
+                    raise errors.InvalidSignature(
+                        'Failed to verify signature '
+                        'with key %s.' % pubkey['keyid'])
             if is_verify:
                 result = result.valid
 
@@ -138,14 +148,14 @@ def with_unitary_gpg(fun):
     return wrapped
 
 
-class UnitaryGPGWrapper(object):
+class TempGPGWrapper(object):
     """
     A context manager returning a temporary GPG wrapper keyring, which
-    contains exactly zero or one keys.
+    contains exactly zero or one pubkeys, and zero or one privkeys.
 
     Temporary unitary keyrings allow the to use GPG's facilities for exactly
     one key. This function creates an empty temporary keyring and imports
-    C{key_data} if it is not None.
+    C{keys} if it is not None.
     """
     def __init__(self, keys=None):
         """
@@ -157,8 +167,9 @@ class UnitaryGPGWrapper(object):
             keys = list()
         if not isinstance(keys, list):
             keys = [keys]
-        self.keys = keys
-        # TODO assert keys is OpenPGP key
+        self._keys = keys
+        for key in filter(None, keys):
+            leap_assert_type(key, OpenPGPKey)
 
     def __enter__(self):
         """
@@ -172,7 +183,7 @@ class UnitaryGPGWrapper(object):
 
     def __exit__(self, exc_type, exc_value, traceback):
         """
-        Ensures the unitary gpgwrapper is properly destroyed.
+        Ensures the gpgwrapper is properly destroyed.
         """
         # TODO handle exceptions and log here
         self._destroy_keyring()
@@ -187,8 +198,8 @@ class UnitaryGPGWrapper(object):
         @return: A GPG wrapper with a unitary keyring.
         @rtype: gnupg.GPG
         """
-        privkeys = [key for key in self.keys if key and key.private is True]
-        publkeys = [key for key in self.keys if key and key.private is False]
+        privkeys = [key for key in self._keys if key and key.private is True]
+        publkeys = [key for key in self._keys if key and key.private is False]
         # here we filter out public keys that have a correspondent
         # private key in the list because the private key_data by
         # itself is enough to also have the public key in the keyring,
@@ -204,11 +215,11 @@ class UnitaryGPGWrapper(object):
         self._gpg = GPGWrapper(gnupghome=tempfile.mkdtemp())
         leap_assert(len(listkeys()) is 0, 'Keyring not empty.')
 
-        # import keys into the keyring
-        self._gpg.import_keys(
-            reduce(
-                lambda x, y: x + y,
-                [key.key_data for key in publkeys + privkeys], ''))
+        # import keys into the keyring:
+        # concatenating ascii-armored keys, which is correctly
+        # understood by the GPGWrapper.
+        self._gpg.import_keys("".join(
+            [x.key_data for x in publkeys + privkeys]))
 
         # assert the number of keys in the keyring
         leap_assert(
@@ -227,7 +238,6 @@ class UnitaryGPGWrapper(object):
         # TODO: implement some kind of wiping of data or a more
         # secure way that
         # does not write to disk.
-        # --- maybe we could mmap the file?
 
         try:
             for secret in [True, False]:
@@ -250,7 +260,7 @@ class UnitaryGPGWrapper(object):
 # API functions
 #
 
-@with_unitary_gpg
+@with_temporary_gpg
 def encrypt_sym(data, passphrase=None, sign=None):
     """
     Encrypt C{data} with C{passphrase} and sign with C{sign} private key.
@@ -281,7 +291,7 @@ def encrypt_sym(data, passphrase=None, sign=None):
         passphrase=passphrase, symmetric=True)
 
 
-@with_unitary_gpg
+@with_temporary_gpg
 def decrypt_sym(data, passphrase=None, verify=None):
     """
     Decrypt C{data} with C{passphrase} and verify with C{verify} public
@@ -314,7 +324,7 @@ def decrypt_sym(data, passphrase=None, verify=None):
         data, passphrase=passphrase)
 
 
-@with_unitary_gpg
+@with_temporary_gpg
 def encrypt_asym(data, key, passphrase=None, sign=None):
     """
     Encrypt C{data} using public @{key} and sign with C{sign} key.
@@ -346,7 +356,7 @@ def encrypt_asym(data, key, passphrase=None, sign=None):
         passphrase=passphrase, symmetric=False)
 
 
-@with_unitary_gpg
+@with_temporary_gpg
 def decrypt_asym(data, key, passphrase=None, verify=None):
     """
     Decrypt C{data} using private @{key} and verify with C{verify} key.
@@ -379,7 +389,7 @@ def decrypt_asym(data, key, passphrase=None, verify=None):
         data, passphrase=passphrase)
 
 
-@with_unitary_gpg
+@with_temporary_gpg
 def is_encrypted(data):
     """
     Return whether C{data} was encrypted using OpenPGP.
@@ -393,7 +403,7 @@ def is_encrypted(data):
     return lambda gpg: gpg.is_encrypted(data)
 
 
-@with_unitary_gpg
+@with_temporary_gpg
 def is_encrypted_sym(data):
     """
     Return whether C{data} was encrypted using a public OpenPGP key.
@@ -407,7 +417,7 @@ def is_encrypted_sym(data):
     return lambda gpg: gpg.is_encrypted_sym(data)
 
 
-@with_unitary_gpg
+@with_temporary_gpg
 def is_encrypted_asym(data):
     """
     Return whether C{data} was asymmetrically encrypted using OpenPGP.
@@ -421,7 +431,7 @@ def is_encrypted_asym(data):
     return lambda gpg: gpg.is_encrypted_asym(data)
 
 
-@with_unitary_gpg
+@with_temporary_gpg
 def sign(data, key):
     """
     Sign C{data} with C{privkey}.
@@ -441,7 +451,7 @@ def sign(data, key):
     return lambda gpg: gpg.sign(data, keyid=key.key_id)
 
 
-@with_unitary_gpg
+@with_temporary_gpg
 def verify(data, key):
     """
     Verify signed C{data} with C{pubkey}.
@@ -564,7 +574,7 @@ class OpenPGPScheme(EncryptionScheme):
                     gpg.export_keys(key['fingerprint'], secret=secret))
                 self.put_key(openpgp_key)
 
-        with unitary_gpgwrapper() as gpg:
+        with temporary_gpgwrapper() as gpg:
             # TODO: inspect result, or use decorator
             _gen_key(gpg)
 
@@ -636,7 +646,7 @@ class OpenPGPScheme(EncryptionScheme):
                 gpg.export_keys(pubkey['fingerprint'], secret=False))
             self.put_key(openpgp_pubkey)
 
-        with unitary_gpgwrapper() as gpg:
+        with temporary_gpgwrapper() as gpg:
             # TODO: inspect result, or use decorator
             _put_ascii_key(gpg)
 
