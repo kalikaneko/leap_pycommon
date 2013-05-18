@@ -149,10 +149,11 @@ class KeyManagerWithSoledadTestCase(BaseLeapTest):
         self._soledad = Soledad(
             "leap@leap.se",
             "123456",
-            secret_path=self.tempdir+"/secret.gpg",
-            local_db_path=self.tempdir+"/soledad.u1db",
-            server_url='',
-            cert_file=None,
+            self.tempdir+"/secret.gpg",
+            self.tempdir+"/soledad.u1db",
+            "",
+            None,
+            auth_token=None
         )
 
     def tearDown(self):
