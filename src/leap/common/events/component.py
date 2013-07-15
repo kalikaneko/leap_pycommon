@@ -29,8 +29,6 @@ some other component.
 
 
 import logging
-import threading
-
 
 from protobuf.socketrpc import RpcService
 from leap.common.events import (
@@ -122,7 +120,7 @@ def register(signal, callback, uid=None, replace=False, reqcbk=None,
     cbklist = registered_callbacks[signal]
     if uid and filter(lambda (x, y): x == uid, cbklist):
         if not replace:
-            raise CallbackAlreadyRegisteredException()
+            raise CallbackAlreadyRegistered()
         else:
             registered_callbacks[signal] = filter(lambda(x, y): x != uid,
                                                   cbklist)
@@ -140,6 +138,7 @@ def register(signal, callback, uid=None, replace=False, reqcbk=None,
         server.SERVER_PORT,
         str(request)[:40])
     return service.register(request, callback=reqcbk, timeout=timeout)
+
 
 def unregister(signal, uid=None, reqcbk=None, timeout=1000):
     """
