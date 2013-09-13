@@ -50,16 +50,17 @@ def leap_assert(condition, message=""):
 
 def leap_assert_type(var, expectedType):
     """
-    Helper assert check for a variable's expected type
+    Helper assert that checks for a variable's expected type.
 
     :param var: variable to check
     :type var: any
-    :param expectedType: type to check agains
-    :type expectedType: type
+    :param expectedType: type to check against
+    :type expectedType: type, or tuple of types
     """
-    leap_assert(isinstance(var, expectedType),
-                "Expected type %r instead of %r" %
-                (expectedType, type(var)))
+    if not isinstance(var, expectedType):
+        raise TypeError(
+            "Expected type %r instead of %r" %
+            (expectedType, type(var)))
 
 
 def leap_check(condition, message="", exception=Exception):
